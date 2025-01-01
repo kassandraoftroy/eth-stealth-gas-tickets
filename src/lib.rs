@@ -1,13 +1,15 @@
 mod types;
 
-use blind_rsa_signatures::{Options, PublicKey, BlindSignature, Secret, MessageRandomizer, Signature};
-use blind_rsa_signatures::reexports::rsa::RsaPublicKey as BlindRsaPublicKey;
 use blind_rsa_signatures::reexports::rsa::BigUint;
-use rand::{RngCore, CryptoRng};
+use blind_rsa_signatures::reexports::rsa::PublicKeyParts;
+use blind_rsa_signatures::reexports::rsa::RsaPublicKey as BlindRsaPublicKey;
+use blind_rsa_signatures::{
+    BlindSignature, MessageRandomizer, Options, PublicKey, Secret, Signature,
+};
+use rand::{CryptoRng, RngCore};
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use types::{BlindedSignature, SignedTicket, UnsignedTicket};
-use blind_rsa_signatures::reexports::rsa::PublicKeyParts;
 
 /// Custom error for the library
 #[derive(Debug)]
@@ -28,7 +30,9 @@ impl std::fmt::Display for CoordPubKeyError {
             CoordPubKeyError::FinalizationFailed(e) => write!(f, "Finalization failed: {}", e),
             CoordPubKeyError::VerificationFailed(e) => write!(f, "Verification failed: {}", e),
             CoordPubKeyError::LengthMismatch => write!(f, "Mismatched lengths between inputs"),
-            CoordPubKeyError::IdMismatch => write!(f, "ID mismatch between ticket and blind signature"),
+            CoordPubKeyError::IdMismatch => {
+                write!(f, "ID mismatch between ticket and blind signature")
+            }
         }
     }
 }
@@ -64,11 +68,8 @@ impl CoordinatorPubKey {
         let modulus = BigUint::from_bytes_be(&modulus_bytes);
 
         // Construct the DER representation for the public key
-        let blind_key = BlindRsaPublicKey::new(
-            modulus,
-            exponent
-        ).expect("Failed to convert key");
-        
+        let blind_key = BlindRsaPublicKey::new(modulus, exponent).expect("Failed to convert key");
+
         let pub_key = PublicKey(blind_key);
         Ok(Self { pub_key })
     }
@@ -94,18 +95,18 @@ impl CoordinatorPubKey {
     ) -> Result<Vec<UnsignedTicket>, CoordPubKeyError> {
         let mut tickets = Vec::new();
         let options = Options::default();
-    
+
         for _ in 0..count {
             // Generate a random 32-byte message
             let mut msg = vec![0u8; 32];
             rng.fill_bytes(&mut msg);
-    
+
             // Blind the message
             let blinding_result = self
                 .pub_key
                 .blind(rng, &msg, true, &options)
                 .map_err(|e| CoordPubKeyError::BlindingFailed(format!("{:?}", e)))?;
-    
+
             // Compute the ID (sha256 hash of the blind message)
             let mut hasher = Sha256::new();
             hasher.update(&blinding_result.blind_msg);
@@ -115,7 +116,7 @@ impl CoordinatorPubKey {
                 Some(r) => format!("0x{}", hex::encode(r.as_ref())),
                 None => format!("0x{}", hex::encode(&[0; 32])),
             };
-    
+
             tickets.push(UnsignedTicket {
                 msg: format!("0x{}", hex::encode(&msg)),
                 blind_msg: format!("0x{}", hex::encode(&blinding_result.blind_msg)),
@@ -124,10 +125,9 @@ impl CoordinatorPubKey {
                 secret: format!("0x{}", hex::encode(&blinding_result.secret)),
             });
         }
-    
+
         Ok(tickets)
     }
-    
 
     /// Finalize blind signatures into signed tickets
     pub fn finalize_tickets(
@@ -147,11 +147,19 @@ impl CoordinatorPubKey {
                 return Err(CoordPubKeyError::IdMismatch);
             }
 
-            let sig = BlindSignature(hex::decode(blind_sig.blind_sig.trim_start_matches("0x")).map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?);
-            let secret = Secret(hex::decode(ticket.secret.trim_start_matches("0x")).map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?);
-            let msg = hex::decode(ticket.msg.trim_start_matches("0x")).map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
+            let sig = BlindSignature(
+                hex::decode(blind_sig.blind_sig.trim_start_matches("0x"))
+                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?,
+            );
+            let secret = Secret(
+                hex::decode(ticket.secret.trim_start_matches("0x"))
+                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?,
+            );
+            let msg = hex::decode(ticket.msg.trim_start_matches("0x"))
+                .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
             let msg_randomizer = {
-                let raw = hex::decode(ticket.msg_randomizer.trim_start_matches("0x")).map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
+                let raw = hex::decode(ticket.msg_randomizer.trim_start_matches("0x"))
+                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
                 if raw.iter().all(|&b| b == 0) {
                     None
                 } else {
@@ -184,8 +192,10 @@ impl CoordinatorPubKey {
     ) -> Result<(), CoordPubKeyError> {
         let options = Options::default();
         for ticket in &signed_tickets {
-            let sig = Signature(hex::decode(ticket.finalized_sig.trim_start_matches("0x"))
-                .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?);
+            let sig = Signature(
+                hex::decode(ticket.finalized_sig.trim_start_matches("0x"))
+                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?,
+            );
             let msg = hex::decode(ticket.msg.trim_start_matches("0x"))
                 .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
             let msg_randomizer = {
@@ -202,7 +212,9 @@ impl CoordinatorPubKey {
 
             self.pub_key
                 .verify(&sig, msg_randomizer, &msg, &options)
-                .map_err(|_| CoordPubKeyError::VerificationFailed("Invalid signature".to_string()))?;
+                .map_err(|_| {
+                    CoordPubKeyError::VerificationFailed("Invalid signature".to_string())
+                })?;
         }
 
         Ok(())
@@ -225,11 +237,7 @@ mod tests {
         // Convert public key to hex
         let modulus = pub_key.n().to_bytes_be();
         let exponent = pub_key.e().to_bytes_be();
-        let hex_key = format!(
-            "0x{}00{}",
-            hex::encode(exponent),
-            hex::encode(modulus)
-        );
+        let hex_key = format!("0x{}00{}", hex::encode(exponent), hex::encode(modulus));
 
         // Create CoordinatorPubKey from hex
         let coordinator_pubkey = CoordinatorPubKey::from_hex_string(&hex_key)
