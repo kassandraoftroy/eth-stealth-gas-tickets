@@ -1,8 +1,8 @@
 # eth-stealth-gas-tickets
 
-rust library implementing blind RSA signatures for gas tickets on ethereum to enable private gas sponsorship
+rust library implementing blind RSA signatures for gas tickets on ethereum to enable private gas sponsorship.
 
-this is an auxiliary part of a robust and user-friendly stealth addresses scheme
+private gas sponsorship is a tool that supports robust and user-friendly stealth addresses on ethereum. see related eth-stealth-addresses lib [here](https://github.com/kassandraoftroy/eth-stealth-addresses)
 
 let's make privacy on evm chains a reality!
 
@@ -33,7 +33,7 @@ fn main() {
 }
 ```
 
-a simple cli is forthcoming
+cli is forthcoming!
 
 ## Test
 
