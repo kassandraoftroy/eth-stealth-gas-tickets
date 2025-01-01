@@ -9,7 +9,7 @@ use blind_rsa_signatures::{
 use rand::{CryptoRng, RngCore};
 use sha2::{Digest, Sha256};
 use std::error::Error;
-use types::{BlindedSignature, SignedTicket, UnsignedTicket};
+pub use types::{BlindedSignature, SignedTicket, UnsignedTicket};
 
 /// Custom error for the library
 #[derive(Debug)]
