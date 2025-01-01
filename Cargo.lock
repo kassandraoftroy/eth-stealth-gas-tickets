@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "eth-stealth-gas-tickets"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blind-rsa-signatures",
  "hex",
