@@ -1,6 +1,6 @@
 [package]
 name = "eth-stealth-gas-tickets"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["kassandra.eth 0xDADA@protonmail.com"]
 license = "MIT"

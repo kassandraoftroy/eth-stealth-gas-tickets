@@ -24,5 +24,4 @@ pub struct SignedTicket {
     pub msg: Bytes,
     pub msg_randomizer: FixedBytes<32>,
     pub finalized_sig: Bytes,
-    pub id: FixedBytes<32>,
 }
