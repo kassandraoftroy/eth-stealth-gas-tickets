@@ -1,5 +1,6 @@
 mod types;
 
+use alloy::primitives::{Bytes, FixedBytes};
 use blind_rsa_signatures::reexports::rsa::BigUint;
 use blind_rsa_signatures::reexports::rsa::PublicKeyParts;
 use blind_rsa_signatures::reexports::rsa::RsaPublicKey as BlindRsaPublicKey;
@@ -14,7 +15,6 @@ pub use types::{BlindedSignature, SignedTicket, UnsignedTicket};
 /// Custom error for the library
 #[derive(Debug)]
 pub enum CoordPubKeyError {
-    InvalidHex(String),
     BlindingFailed(String),
     FinalizationFailed(String),
     VerificationFailed(String),
@@ -25,7 +25,6 @@ pub enum CoordPubKeyError {
 impl std::fmt::Display for CoordPubKeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CoordPubKeyError::InvalidHex(e) => write!(f, "Invalid hex: {}", e),
             CoordPubKeyError::BlindingFailed(e) => write!(f, "Blinding failed: {}", e),
             CoordPubKeyError::FinalizationFailed(e) => write!(f, "Finalization failed: {}", e),
             CoordPubKeyError::VerificationFailed(e) => write!(f, "Verification failed: {}", e),
@@ -110,19 +109,19 @@ impl CoordinatorPubKey {
             // Compute the ID (sha256 hash of the blind message)
             let mut hasher = Sha256::new();
             hasher.update(&blinding_result.blind_msg);
-            let id = format!("0x{}", hex::encode(hasher.finalize()));
+            let id = FixedBytes::from_slice(&hasher.finalize());
 
             let msg_randomizer = match blinding_result.msg_randomizer {
-                Some(r) => format!("0x{}", hex::encode(r.as_ref())),
-                None => format!("0x{}", hex::encode(&[0; 32])),
+                Some(r) => FixedBytes::from_slice(r.as_ref()),
+                None => FixedBytes::from_slice(&[0; 32]),
             };
 
             tickets.push(UnsignedTicket {
-                msg: format!("0x{}", hex::encode(&msg)),
-                blind_msg: format!("0x{}", hex::encode(&blinding_result.blind_msg)),
-                msg_randomizer,
-                id,
-                secret: format!("0x{}", hex::encode(&blinding_result.secret)),
+                msg: Bytes::copy_from_slice(&msg),
+                blind_msg: Bytes::copy_from_slice(&blinding_result.blind_msg),
+                msg_randomizer: msg_randomizer,
+                id: id,
+                secret: Bytes::copy_from_slice(&blinding_result.secret),
             });
         }
 
@@ -147,19 +146,11 @@ impl CoordinatorPubKey {
                 return Err(CoordPubKeyError::IdMismatch);
             }
 
-            let sig = BlindSignature(
-                hex::decode(blind_sig.blind_sig.trim_start_matches("0x"))
-                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?,
-            );
-            let secret = Secret(
-                hex::decode(ticket.secret.trim_start_matches("0x"))
-                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?,
-            );
-            let msg = hex::decode(ticket.msg.trim_start_matches("0x"))
-                .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
+            let sig = BlindSignature(blind_sig.blind_sig.to_vec());
+            let secret = Secret(ticket.secret.to_vec());
+            let msg = ticket.msg.to_vec();
             let msg_randomizer = {
-                let raw = hex::decode(ticket.msg_randomizer.trim_start_matches("0x"))
-                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
+                let raw = ticket.msg_randomizer.to_vec();
                 if raw.iter().all(|&b| b == 0) {
                     None
                 } else {
@@ -177,12 +168,37 @@ impl CoordinatorPubKey {
             signed_tickets.push(SignedTicket {
                 msg: ticket.msg,
                 msg_randomizer: ticket.msg_randomizer,
-                finalized_sig: format!("0x{}", hex::encode(&finalized_sig)),
+                finalized_sig: Bytes::copy_from_slice(&finalized_sig),
                 id: blind_sig.id,
             });
         }
 
         Ok(signed_tickets)
+    }
+
+    pub fn verify_signed_ticket(
+        &self,
+        signed_ticket: SignedTicket,
+        options: &Options,
+    ) -> Result<(), CoordPubKeyError> {
+        let sig = Signature(signed_ticket.finalized_sig.to_vec());
+        let msg = signed_ticket.msg.to_vec();
+        let msg_randomizer = {
+            let raw = signed_ticket.msg_randomizer.to_vec();
+            if raw.iter().all(|&b| b == 0) {
+                None
+            } else {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&raw);
+                Some(MessageRandomizer(arr))
+            }
+        };
+
+        self.pub_key
+            .verify(&sig, msg_randomizer, &msg, options)
+            .map_err(|_| CoordPubKeyError::VerificationFailed("Invalid signature".to_string()))?;
+
+        Ok(())
     }
 
     /// Verify signed tickets
@@ -191,33 +207,15 @@ impl CoordinatorPubKey {
         signed_tickets: Vec<SignedTicket>,
     ) -> Result<(), CoordPubKeyError> {
         let options = Options::default();
-        for ticket in &signed_tickets {
-            let sig = Signature(
-                hex::decode(ticket.finalized_sig.trim_start_matches("0x"))
-                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?,
-            );
-            let msg = hex::decode(ticket.msg.trim_start_matches("0x"))
-                .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
-            let msg_randomizer = {
-                let raw = hex::decode(ticket.msg_randomizer.trim_start_matches("0x"))
-                    .map_err(|e| CoordPubKeyError::InvalidHex(e.to_string()))?;
-                if raw.iter().all(|&b| b == 0) {
-                    None
-                } else {
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&raw);
-                    Some(MessageRandomizer(arr))
-                }
-            };
-
-            self.pub_key
-                .verify(&sig, msg_randomizer, &msg, &options)
-                .map_err(|_| {
-                    CoordPubKeyError::VerificationFailed("Invalid signature".to_string())
-                })?;
+        for ticket in signed_tickets {
+            self.verify_signed_ticket(ticket, &options)?;
         }
 
         Ok(())
+    }
+
+    pub fn get_options() -> Options {
+        Options::default()
     }
 }
 
@@ -263,11 +261,11 @@ mod tests {
         // Validate tickets
         assert_eq!(tickets.len(), 5);
         for ticket in tickets {
-            assert!(ticket.msg.starts_with("0x"));
-            assert!(ticket.blind_msg.starts_with("0x"));
-            assert!(ticket.msg_randomizer.starts_with("0x"));
-            assert!(ticket.id.starts_with("0x"));
-            assert!(ticket.secret.starts_with("0x"));
+            assert!(!ticket.msg.is_empty());
+            assert!(!ticket.blind_msg.is_empty());
+            assert!(!ticket.msg_randomizer.is_zero());
+            assert!(!ticket.id.is_zero());
+            assert!(!ticket.secret.is_empty());
         }
     }
 
@@ -288,15 +286,11 @@ mod tests {
         let mut blind_signatures = Vec::new();
         for ticket in &tickets {
             let blind_sig = priv_key
-                .blind_sign(
-                    &mut rng,
-                    &hex::decode(ticket.blind_msg.trim_start_matches("0x")).unwrap(),
-                    &Options::default(),
-                )
+                .blind_sign(&mut rng, ticket.blind_msg.as_ref(), &Options::default())
                 .expect("Failed to sign blind message");
 
             blind_signatures.push(BlindedSignature {
-                blind_sig: format!("0x{}", hex::encode(blind_sig)),
+                blind_sig: Bytes::copy_from_slice(&blind_sig),
                 id: ticket.id.clone(),
             });
         }
@@ -309,10 +303,10 @@ mod tests {
         // Validate signed tickets
         assert_eq!(signed_tickets.len(), 3);
         for signed_ticket in &signed_tickets {
-            assert!(signed_ticket.msg.starts_with("0x"));
-            assert!(signed_ticket.msg_randomizer.starts_with("0x"));
-            assert!(signed_ticket.finalized_sig.starts_with("0x"));
-            assert!(signed_ticket.id.starts_with("0x"));
+            assert!(!signed_ticket.msg.is_empty());
+            assert!(!signed_ticket.msg_randomizer.is_zero());
+            assert!(!signed_ticket.finalized_sig.is_empty());
+            assert!(!signed_ticket.id.is_zero());
         }
     }
 
@@ -333,15 +327,11 @@ mod tests {
         let mut blind_signatures = Vec::new();
         for ticket in &tickets {
             let blind_sig = priv_key
-                .blind_sign(
-                    &mut rng,
-                    &hex::decode(ticket.blind_msg.trim_start_matches("0x")).unwrap(),
-                    &Options::default(),
-                )
+                .blind_sign(&mut rng, ticket.blind_msg.as_ref(), &Options::default())
                 .expect("Failed to sign blind message");
 
             blind_signatures.push(BlindedSignature {
-                blind_sig: format!("0x{}", hex::encode(blind_sig)),
+                blind_sig: Bytes::copy_from_slice(&blind_sig),
                 id: ticket.id.clone(),
             });
         }
