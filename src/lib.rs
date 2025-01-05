@@ -177,7 +177,7 @@ impl CoordinatorPubKey {
 
     pub fn verify_signed_ticket(
         &self,
-        signed_ticket: SignedTicket,
+        signed_ticket: &SignedTicket,
         options: &Options,
     ) -> Result<(), CoordPubKeyError> {
         let sig = Signature(signed_ticket.finalized_sig.to_vec());
@@ -207,7 +207,7 @@ impl CoordinatorPubKey {
     ) -> Result<(), CoordPubKeyError> {
         let options = Options::default();
         for ticket in signed_tickets {
-            self.verify_signed_ticket(ticket, &options)?;
+            self.verify_signed_ticket(&ticket, &options)?;
         }
 
         Ok(())
