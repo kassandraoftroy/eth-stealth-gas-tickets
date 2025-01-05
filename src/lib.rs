@@ -169,7 +169,6 @@ impl CoordinatorPubKey {
                 msg: ticket.msg,
                 msg_randomizer: ticket.msg_randomizer,
                 finalized_sig: Bytes::copy_from_slice(&finalized_sig),
-                id: blind_sig.id,
             });
         }
 
@@ -306,7 +305,6 @@ mod tests {
             assert!(!signed_ticket.msg.is_empty());
             assert!(!signed_ticket.msg_randomizer.is_zero());
             assert!(!signed_ticket.finalized_sig.is_empty());
-            assert!(!signed_ticket.id.is_zero());
         }
     }
 
