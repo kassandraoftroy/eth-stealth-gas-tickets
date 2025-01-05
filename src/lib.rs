@@ -40,7 +40,7 @@ impl Error for CoordPubKeyError {}
 
 /// Represents a Coordinator's public key for blind signature operations
 pub struct CoordinatorPubKey {
-    pub_key: PublicKey,
+    pub pub_key: PublicKey,
 }
 
 impl CoordinatorPubKey {
@@ -214,7 +214,7 @@ impl CoordinatorPubKey {
         Ok(())
     }
 
-    pub fn get_options() -> Options {
+    pub fn get_options(&self) -> Options {
         Options::default()
     }
 }
