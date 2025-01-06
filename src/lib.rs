@@ -14,7 +14,7 @@ pub use types::{BlindedSignature, SignedTicket, UnsignedTicket};
 
 /// Custom error for the library
 #[derive(Debug)]
-pub enum CoordPubKeyError {
+pub enum VerifierError {
     BlindingFailed(String),
     FinalizationFailed(String),
     VerificationFailed(String),
@@ -22,35 +22,39 @@ pub enum CoordPubKeyError {
     IdMismatch,
 }
 
-impl std::fmt::Display for CoordPubKeyError {
+impl std::fmt::Display for VerifierError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CoordPubKeyError::BlindingFailed(e) => write!(f, "Blinding failed: {}", e),
-            CoordPubKeyError::FinalizationFailed(e) => write!(f, "Finalization failed: {}", e),
-            CoordPubKeyError::VerificationFailed(e) => write!(f, "Verification failed: {}", e),
-            CoordPubKeyError::LengthMismatch => write!(f, "Mismatched lengths between inputs"),
-            CoordPubKeyError::IdMismatch => {
+            VerifierError::BlindingFailed(e) => write!(f, "Blinding failed: {}", e),
+            VerifierError::FinalizationFailed(e) => write!(f, "Finalization failed: {}", e),
+            VerifierError::VerificationFailed(e) => write!(f, "Verification failed: {}", e),
+            VerifierError::LengthMismatch => write!(f, "Mismatched lengths between inputs"),
+            VerifierError::IdMismatch => {
                 write!(f, "ID mismatch between ticket and blind signature")
             }
         }
     }
 }
 
-impl Error for CoordPubKeyError {}
+impl Error for VerifierError {}
 
 /// Represents a Coordinator's public key for blind signature operations
-pub struct CoordinatorPubKey {
-    pub pub_key: PublicKey,
+pub struct TicketsVerifier {
+    pub public_key: PublicKey,
 }
 
-impl CoordinatorPubKey {
-    /// Create a new CoordinatorPubKey from a raw `PublicKey`
-    pub fn new(pub_key: PublicKey) -> Self {
-        Self { pub_key }
+impl TicketsVerifier {
+    /// Create a new TicketsVerifier from a raw `PublicKey`
+    pub fn new(public_key: PublicKey) -> Self {
+        Self { public_key }
     }
 
-    /// Create a CoordinatorPubKey from a hex string
-    pub fn from_hex_string(hex_key: &str) -> Result<Self, CoordPubKeyError> {
+    pub fn get_options(&self) -> Options {
+        Options::default()
+    }
+
+    /// Create a TicketsVerifier from a hex string
+    pub fn from_hex_string(hex_key: &str) -> Result<Self, VerifierError> {
         // Remove the "0x" prefix
         let hex = hex_key.trim_start_matches("0x");
 
@@ -69,14 +73,14 @@ impl CoordinatorPubKey {
         // Construct the DER representation for the public key
         let blind_key = BlindRsaPublicKey::new(modulus, exponent).expect("Failed to convert key");
 
-        let pub_key = PublicKey(blind_key);
-        Ok(Self { pub_key })
+        let public_key = PublicKey(blind_key);
+        Ok(Self { public_key })
     }
 
     pub fn to_hex_string(&self) -> String {
         // Get the modulus (n) and exponent (e)
-        let modulus = self.pub_key.n().to_bytes_be();
-        let exponent = self.pub_key.e().to_bytes_be();
+        let modulus = self.public_key.n().to_bytes_be();
+        let exponent = self.public_key.e().to_bytes_be();
 
         // Convert modulus and exponent to hex
         let modulus_hex = hex::encode(modulus);
@@ -91,7 +95,7 @@ impl CoordinatorPubKey {
         &self,
         rng: &mut R,
         count: usize,
-    ) -> Result<Vec<UnsignedTicket>, CoordPubKeyError> {
+    ) -> Result<Vec<UnsignedTicket>, VerifierError> {
         let mut tickets = Vec::new();
         let options = Options::default();
 
@@ -102,9 +106,9 @@ impl CoordinatorPubKey {
 
             // Blind the message
             let blinding_result = self
-                .pub_key
+                .public_key
                 .blind(rng, &msg, true, &options)
-                .map_err(|e| CoordPubKeyError::BlindingFailed(format!("{:?}", e)))?;
+                .map_err(|e| VerifierError::BlindingFailed(format!("{:?}", e)))?;
 
             // Compute the ID (sha256 hash of the blind message)
             let mut hasher = Sha256::new();
@@ -133,9 +137,9 @@ impl CoordinatorPubKey {
         &self,
         tickets: Vec<UnsignedTicket>,
         blind_signatures: Vec<BlindedSignature>,
-    ) -> Result<Vec<SignedTicket>, CoordPubKeyError> {
+    ) -> Result<Vec<SignedTicket>, VerifierError> {
         if tickets.len() != blind_signatures.len() {
-            return Err(CoordPubKeyError::LengthMismatch);
+            return Err(VerifierError::LengthMismatch);
         }
 
         let options = Options::default();
@@ -143,7 +147,7 @@ impl CoordinatorPubKey {
 
         for (ticket, blind_sig) in tickets.into_iter().zip(blind_signatures.into_iter()) {
             if ticket.id != blind_sig.id {
-                return Err(CoordPubKeyError::IdMismatch);
+                return Err(VerifierError::IdMismatch);
             }
 
             let sig = BlindSignature(blind_sig.blind_sig.to_vec());
@@ -161,9 +165,9 @@ impl CoordinatorPubKey {
             };
 
             let finalized_sig = self
-                .pub_key
+                .public_key
                 .finalize(&sig, &secret, msg_randomizer, &msg, &options)
-                .map_err(|e| CoordPubKeyError::FinalizationFailed(format!("{:?}", e)))?;
+                .map_err(|e| VerifierError::FinalizationFailed(format!("{:?}", e)))?;
 
             signed_tickets.push(SignedTicket {
                 msg: ticket.msg,
@@ -179,7 +183,7 @@ impl CoordinatorPubKey {
         &self,
         signed_ticket: &SignedTicket,
         options: &Options,
-    ) -> Result<(), CoordPubKeyError> {
+    ) -> Result<(), VerifierError> {
         let sig = Signature(signed_ticket.finalized_sig.to_vec());
         let msg = signed_ticket.msg.to_vec();
         let msg_randomizer = {
@@ -193,9 +197,9 @@ impl CoordinatorPubKey {
             }
         };
 
-        self.pub_key
+        self.public_key
             .verify(&sig, msg_randomizer, &msg, options)
-            .map_err(|_| CoordPubKeyError::VerificationFailed("Invalid signature".to_string()))?;
+            .map_err(|_| VerifierError::VerificationFailed("Invalid signature".to_string()))?;
 
         Ok(())
     }
@@ -204,17 +208,13 @@ impl CoordinatorPubKey {
     pub fn verify_signed_tickets(
         &self,
         signed_tickets: Vec<SignedTicket>,
-    ) -> Result<(), CoordPubKeyError> {
+    ) -> Result<(), VerifierError> {
         let options = Options::default();
         for ticket in signed_tickets {
             self.verify_signed_ticket(&ticket, &options)?;
         }
 
         Ok(())
-    }
-
-    pub fn get_options(&self) -> Options {
-        Options::default()
     }
 }
 
@@ -225,7 +225,7 @@ mod tests {
     use rand::thread_rng;
 
     #[test]
-    fn test_coordinatorpubkey_from_hex_string() {
+    fn test_verifier_from_hex_string() {
         // Generate a keypair and extract the public key
         let mut rng = thread_rng();
         let kp = KeyPair::generate(&mut rng, 2048).unwrap();
@@ -236,21 +236,21 @@ mod tests {
         let exponent = pub_key.e().to_bytes_be();
         let hex_key = format!("0x{}00{}", hex::encode(exponent), hex::encode(modulus));
 
-        // Create CoordinatorPubKey from hex
-        let coordinator_pubkey = CoordinatorPubKey::from_hex_string(&hex_key)
+        // Create TicketsVerifier from hex
+        let coordinator_pubkey = TicketsVerifier::from_hex_string(&hex_key)
             .expect("Failed to parse public key from hex");
 
         // Ensure the modulus and exponent match
-        assert_eq!(coordinator_pubkey.pub_key.n(), pub_key.n());
-        assert_eq!(coordinator_pubkey.pub_key.e(), pub_key.e());
+        assert_eq!(coordinator_pubkey.public_key.n(), pub_key.n());
+        assert_eq!(coordinator_pubkey.public_key.e(), pub_key.e());
     }
 
     #[test]
     fn test_new_blind_tickets() {
-        // Setup CoordinatorPubKey
+        // Setup TicketsVerifier
         let mut rng = thread_rng();
         let kp = KeyPair::generate(&mut rng, 2048).unwrap();
-        let coordinator = CoordinatorPubKey::new(kp.pk);
+        let coordinator = TicketsVerifier::new(kp.pk);
 
         // Generate blind tickets
         let tickets = coordinator
@@ -270,11 +270,11 @@ mod tests {
 
     #[test]
     fn test_finalize_tickets() {
-        // Setup CoordinatorPubKey
+        // Setup TicketsVerifier
         let mut rng = thread_rng();
         let kp = KeyPair::generate(&mut rng, 2048).unwrap();
         let priv_key = kp.sk;
-        let coordinator = CoordinatorPubKey::new(kp.pk);
+        let coordinator = TicketsVerifier::new(kp.pk);
 
         // Generate blind tickets
         let tickets = coordinator
@@ -310,11 +310,11 @@ mod tests {
 
     #[test]
     fn test_verify_signed_tickets() {
-        // Setup CoordinatorPubKey
+        // Setup TicketsVerifier
         let mut rng = thread_rng();
         let kp = KeyPair::generate(&mut rng, 2048).unwrap();
         let priv_key = kp.sk;
-        let coordinator = CoordinatorPubKey::new(kp.pk);
+        let coordinator = TicketsVerifier::new(kp.pk);
 
         // Generate blind tickets
         let tickets = coordinator
